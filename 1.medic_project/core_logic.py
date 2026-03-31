@@ -1,39 +1,25 @@
-import sqlite3
 import os
 import hashlib
 import cv2
 import numpy as np
 import easyocr
-import shutil
+from supabase import create_client, Client
 
-# Initialize OCR once (EasyOCR reader initialization)
+# --- Supabase Credentials ---
+SUPABASE_URL = "https://kmmyznxttxhtwzvzjcaj.supabase.co"
+SUPABASE_KEY = "sb_publishable_om3QNxTMb_Xlx6yLRFqmSg_4XonwDLE"
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
 reader = easyocr.Reader(['en'], gpu=False)
 
 def get_image_hash(image_path):
-    """Image ka unique fingerprint nikalna (Duplicate prevention ke liye)."""
     hasher = hashlib.md5()
     with open(image_path, 'rb') as f:
         buf = f.read()
         hasher.update(buf)
     return hasher.hexdigest()
 
-def organize_and_save(image_path, medicine_name):
-    """Images ko processed folder mein unique name ke sath save karna."""
-    target_dir = r'C:\Users\PRITAM\1.medic_project\dataset\processed_images'
-    if not os.path.exists(target_dir):
-        os.makedirs(target_dir)
-    
-    file_extension = os.path.splitext(image_path)[1]
-    # Name se spaces hata kar underscore lagana
-    safe_name = medicine_name.replace(' ', '_')
-    new_filename = f"{safe_name}_{get_image_hash(image_path)[:8]}{file_extension}"
-    final_path = os.path.join(target_dir, new_filename)
-    
-    shutil.copy(image_path, final_path)
-    return final_path
-
 def analyze_medicine(image_path, actual_name):
-    """Pill features (Color, Shape, Text) extract karne ka main function."""
     img = cv2.imread(image_path)
     if img is None: return None
     
@@ -43,7 +29,7 @@ def analyze_medicine(image_path, actual_name):
     avg_color = np.average(np.average(roi, axis=0), axis=0)
     color_label = "White" if np.mean(avg_color) > 180 else "Colored"
 
-    # 2. Shape Detection (Restored Logic)
+    # 2. Shape Detection
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
     edged = cv2.Canny(blurred, 30, 150)
@@ -56,62 +42,46 @@ def analyze_medicine(image_path, actual_name):
         aspect_ratio = float(w_rect)/h_rect
         peri = cv2.arcLength(c, True)
         approx = cv2.approxPolyDP(c, 0.03 * peri, True)
-        
         if 0.9 <= aspect_ratio <= 1.1 and len(approx) > 6: shape_label = "Round"
         elif aspect_ratio > 1.2 or aspect_ratio < 0.8: shape_label = "Capsule/Oval"
         else: shape_label = "Rectangular/Other"
 
-    # 3. OCR (Text)
+    # 3. OCR
     results = reader.readtext(gray)
     imprint_text = " ".join([str(res[1]) for res in results]).strip()
 
-    return {
-        "Medicine_Name": actual_name,
-        "Color": color_label,
-        "Shape": shape_label,
-        "Imprint": imprint_text
-    }
+    return {"Color": color_label, "Shape": shape_label, "Imprint": imprint_text}
 
 def process_new_medicine(image_path, manual_name):
-    """Database insertion with cleaned names and duplicate check."""
-    # Step 1: Standardize name (Lower case and trim)
-    clean_name = manual_name.lower().strip() 
+    clean_name = manual_name.lower().strip()
+    img_hash = get_image_hash(image_path)
 
-    conn = sqlite3.connect('medic_vault.db')
-    cursor = conn.cursor()
-
-    # Table ensure karna (img_hash column ke saath)
-    cursor.execute('''CREATE TABLE IF NOT EXISTS inventory 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                       name TEXT, color TEXT, shape TEXT, 
-                       imprint TEXT, img_path TEXT, 
-                       img_hash TEXT UNIQUE, 
-                       is_trained INTEGER DEFAULT 0)''')
-    
-    # Step 2: Duplicate Check
-    current_hash = get_image_hash(image_path)
-    try:
-        cursor.execute("SELECT name FROM inventory WHERE img_hash = ?", (current_hash,))
-        if cursor.fetchone():
-            print(f"⚠️ Already exists: {clean_name}")
-            conn.close()
-            return False
-    except sqlite3.OperationalError:
-        # Agar purani table mein img_hash nahi hai toh reset alert
-        print("🚨 Database Error: Please delete 'medic_vault.db' file manually once.")
-        conn.close()
+    # 1. Duplicate Check (Cloud)
+    check = supabase.table("inventory").select("name").eq("img_hash", img_hash).execute()
+    if check.data:
         return False
 
-    # Step 3: Analyze and Save
-    data = analyze_medicine(image_path, clean_name) # clean_name pass kiya
-    if data:
-        final_path = organize_and_save(image_path, clean_name)
-        cursor.execute("""INSERT INTO inventory (name, color, shape, imprint, img_path, img_hash) 
-                          VALUES (?, ?, ?, ?, ?, ?)""", 
-                       (clean_name, data['Color'], data['Shape'], 
-                        data['Imprint'], final_path, current_hash))
-        conn.commit()
-        print(f"✅ Processed: {clean_name}")
-        
-    conn.close()
+    # 2. Analyze Features
+    features = analyze_medicine(image_path, clean_name)
+    if not features: return False
+
+    # 3. Upload to Supabase Storage
+    file_ext = os.path.splitext(image_path)[1]
+    cloud_filename = f"{clean_name.replace(' ', '_')}_{img_hash[:8]}{file_ext}"
+    
+    with open(image_path, 'rb') as f:
+        supabase.storage.from_("medicine-images").upload(cloud_filename, f.read())
+    
+    img_url = supabase.storage.from_("medicine-images").get_public_url(cloud_filename)
+
+    # 4. Insert to Cloud Database
+    supabase.table("inventory").insert({
+        "name": clean_name,
+        "color": features['Color'],
+        "shape": features['Shape'],
+        "imprint": features['Imprint'],
+        "img_url": img_url,
+        "img_hash": img_hash
+    }).execute()
+    
     return True
