@@ -112,12 +112,12 @@ elif page == "Verify My Uploads":
 # 3. Contributor: Read-Only Dataset Preview (Full Data)
 elif page == "Dataset Preview (Read-Only)":
     st.header("🔍 Global Dataset Preview")
-    st.info("Pura dataset yahan dekh sakte ho. Modification ke liye Admin access chahiye.")
+    st.info("TOTAL COLLECTED DATAS ")
     df = fetch_data()
     if not df.empty:
         st.dataframe(df, use_container_width=True)
     else:
-        st.warning("Database khali hai.")
+        st.warning("Database is empty.")
 
 # 4. Admin: Master Control
 elif page == "Master Inventory (Admin)":
