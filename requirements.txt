@@ -5,3 +5,4 @@ easyocr
 numpy
 sympy
 scikit-image
+supabase
