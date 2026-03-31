@@ -23,10 +23,16 @@ if st.session_state.role is None:
     st.stop()
 
 # --- Database Operations ---
-def get_full_db():
+def get_full_db():def get_full_db():
     conn = sqlite3.connect('medic_vault.db')
-    df = pd.read_sql_query("SELECT * FROM inventory", conn)
-    conn.close()
+    try:
+        # Table check karne ke liye
+        df = pd.read_sql_query("SELECT * FROM inventory", conn)
+    except:
+        # Agar table nahi hai, toh khali dataframe bhej do bina crash kiye
+        df = pd.DataFrame(columns=['id', 'name', 'color', 'shape', 'imprint', 'img_path', 'img_hash'])
+    finally:
+        conn.close()
     return df
 
 def update_record(record_id, name, color, shape, imprint):
