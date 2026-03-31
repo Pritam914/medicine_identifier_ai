@@ -7,7 +7,7 @@ from supabase import create_client, Client
 
 # --- Supabase Credentials ---
 SUPABASE_URL = "https://kmmyznxttxhtwzvzjcaj.supabase.co"
-SUPABASE_KEY = "YOUR_SUPABASE_KEY" # Replace with your actual key
+SUPABASE_KEY = "sb_publishable_om3QNxTMb_Xlx6yLRFqmSg_4XonwDLE" # Replace with your actual key
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 reader = easyocr.Reader(['en'], gpu=False)
